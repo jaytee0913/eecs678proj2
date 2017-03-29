@@ -3,6 +3,7 @@
 
 #ifndef LIBSCHEDULER_H_
 #define LIBSCHEDULER_H_
+#include "../libpriqueue/libpriqueue.h"
 
 /**
   Constants which represent the different scheduling algorithms

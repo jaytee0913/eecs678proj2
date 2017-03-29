@@ -16,9 +16,88 @@
 */
 typedef struct _job_t
 {
-
+  int job_number;
+  int time_start;
+  int running_time;
+  int priority;
+  int time_stop;
+  int just_switched;
+  int core_number;
 } job_t;
 
+typedef struct _core_t
+{
+  int core_number;
+  int available;
+  job_t *job;
+} core_t;
+
+priqueue_t j_queue;
+priqueue_t c_queue;
+int time_current;
+int fcfs  (const void* a, const void* b);
+int sjf   (const void* a, const void* b);
+int psjf  (const void* a, const void* b);
+int pri   (const void* a, const void* b);
+int ppri  (const void* a, const void* b);
+int rr    (const void* a, const void* b);
+
+int fcfs(const void* a, const void* b)
+{
+  return 1;
+}
+
+int sjf(const void* a, const void* b)
+{
+  job_t* a_temp = (job_t*)a;
+  job_t* b_temp = (job_t*)b;
+  if(b_temp->core_number > -1)
+  {
+    return 1;
+  }
+  else
+  {
+    return a_temp->running_time - b_temp->running_time;
+  }
+}
+
+int psjf(const void* a, const void* b)
+{
+  job_t* a_temp = (job_t*)a;
+  job_t* b_temp = (job_t*)b;
+  if(b_temp->time_stop >= b_temp->time_start)
+  {
+    return a_temp->running_time - b_temp->running_time;
+  }
+  if(b_temp->time_start > -1)
+  {
+    return a_temp->running_time - (b_temp->running_time - (time_current - b_temp->time_start));
+  }
+  return a_temp->running_time - b_temp->running_time;
+}
+
+int pri(const void* a, const void* b)
+{
+  job_t* a_temp = (job_t*)a;
+  job_t* b_temp = (job_t*)b;
+  if(b_temp->core_number > -1)
+  {
+    return 1;
+  }
+  return a_temp->priority - b_temp->priority;
+}
+
+int ppri(const void* a, const void* b)
+{
+  job_t* a_temp = (job_t*)a;
+  job_t* b_temp = (job_t*)b;
+  return a_temp->priority - b_temp->priority;
+}
+
+int rr(const void* a, const void* b)
+{
+  return 1;
+}
 
 /**
   Initalizes the scheduler.
@@ -34,7 +113,39 @@ typedef struct _job_t
 */
 void scheduler_start_up(int cores, scheme_t scheme)
 {
+  priqueue_init(&c_queue, NULL);
+  for(int i = 0; i < cores; i++)
+  {
+    core_t *core = malloc(sizeof(core_t));
+    core->core_number = i;
+    core->available = 1;
+    core->job = NULL;
+    priqueue_offer(&c_queue, core);
+  }
 
+  switch(scheme)
+  {
+    case FCFS:
+      priqueue_init(&j_queue, fcfs);
+      break;
+    case SJF:
+      priqueue_init(&j_queue, sjf);
+      break;
+    case PSJF:
+      priqueue_init(&j_queue, psjf);
+      break;
+    case PRI:
+      priqueue_init(&j_queue, pri);
+      break;
+    case PPRI:
+      priqueue_init(&j_queue, ppri);
+      break;
+    case RR:
+      priqueue_init(&j_queue, rr);
+      break;
+  }
+  j_queue.ptr_flag = 1;
+  c_queue.ptr_flag = 1;
 }
 
 
@@ -60,7 +171,69 @@ void scheduler_start_up(int cores, scheme_t scheme)
  */
 int scheduler_new_job(int job_number, int time, int running_time, int priority)
 {
-	return -1;
+  time_current = time;
+  job_t* job = malloc(sizeof(job_t));
+  job->job_number = job_number;
+  job->time_start = -1;
+  job->running_time = running_time;
+  job->priority = priority;
+  job->time_stop = -1;
+  int x = priqueue_offer(&j_queue, job);
+  node *i = c_queue.head;
+  while(i)
+  {
+    core_t *core = i->data;
+    if(core->available)
+    {
+      core->available = 0;
+      core->job = job;
+      job->core_number = core->core_number;
+      job->time_start = time;
+      return core->core_number;
+    }
+    i = i->next;
+  }
+	
+  i = priqueue_node_at(&j_queue, x);
+  if(i->next)
+  {
+    job_t *job_temp = i->next->data;
+    if(job_temp->core_number > -1)
+    {
+      i = i->next;
+      node *i_prev = i;
+      while(i)
+      {
+        job_temp = i->data;
+        if(job_temp->core_number < 0)
+        {
+          break;
+        }
+        i_prev = i;
+        i = i->next;
+      }
+      job_temp = i_prev->data;
+      job->core_number = job_temp->core_number;
+      job_temp->core_number = -1;
+      job->time_start = time;
+      if(job_temp->time_start > -1)
+      {
+        job_temp->time_stop = time;
+        job_temp->running_time -= (job_temp->time_stop - job_temp->time_start);
+      }
+      i = priqueue_node_at(&c_queue, job->core_number);
+      core_t *core = i->data;
+      core->job = job;
+      return core->core_number;
+    }
+    else
+    {
+      job->core_number = -1;
+      return -1;
+    }
+  }
+  job->core_number = -1;
+  return -1;
 }
 
 
@@ -80,6 +253,28 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
  */
 int scheduler_job_finished(int core_id, int job_number, int time)
 {
+  time_current = time;
+  node *i = priqueue_node_at(&c_queue, core_id);
+  core_t *core = i->data;
+  core->available = 1;
+  priqueue_remove(&j_queue, core->job);
+  free(core->job);
+  core->job = NULL;
+
+  i = j_queue.head;
+  while(i)
+  {
+    job_t *job = i->data;
+    if(job->core_number < 0)
+    {
+      core->available = 0;
+      core->job = job;
+      job->core_number = core->core_number;
+      job->time_start = time;
+      return job->job_number;
+    }
+    i = i->next;
+  }
 	return -1;
 }
 
@@ -99,6 +294,25 @@ int scheduler_job_finished(int core_id, int job_number, int time)
  */
 int scheduler_quantum_expired(int core_id, int time)
 {
+  time_current = time;
+  core_t *core = priqueue_at(&c_queue, core_id);
+  job_t *job_exp = core->job;
+  priqueue_remove(&j_queue, job_exp);
+  priqueue_offer(&j_queue, job_exp);
+  node *i = j_queue.head;
+  while(i)
+  {
+    job_t *job = i->data;
+    if(job->core_number < 0)
+    {
+      job->core_number = job_exp->core_number;
+      job_exp->core_number = -1;
+      core->job = job;
+      return job->job_number;
+    }
+    i = i->next;
+  }
+  return job_exp->job_number;
 	return -1;
 }
 
@@ -150,7 +364,8 @@ float scheduler_average_response_time()
 */
 void scheduler_clean_up()
 {
-
+  priqueue_destroy(&j_queue);
+  priqueue_destroy(&c_queue);
 }
 
 
@@ -167,5 +382,11 @@ void scheduler_clean_up()
  */
 void scheduler_show_queue()
 {
-
+  node *i = j_queue.head;
+  while(i){
+    job_t *job = i->data;
+    printf("%d(%d) ", job->job_number, job->core_number);
+    i = i->next;
+  }
+  printf("\n");
 }
